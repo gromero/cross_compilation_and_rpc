@@ -99,6 +99,7 @@ import tvm
 from tvm import te
 from tvm import rpc
 from tvm.contrib import utils
+import os
 
 n = tvm.runtime.convert(1024)
 A = te.placeholder((n,), name="A")
@@ -111,18 +112,25 @@ s = te.create_schedule(B.op)
 # Raspberry Pi 3B, but we use 'llvm' here to make this tutorial runnable
 # on our webpage building server. See the detailed note in the following block.
 
-local_demo = True
+local_demo = False
 
 if local_demo:
     target = "llvm"
 else:
     target = "llvm -mtriple=armv7l-linux-gnueabihf"
 
+# Generate .o
 func = tvm.build(s, [A, B], target=target, name="add_one")
-# save the lib at a local temp folder
-temp = utils.tempdir()
-path = temp.relpath("lib.tar")
-func.export_library(path)
+
+def make_shared_object(target, file_list, **kwargs):
+    objs = " ".join(file_list)
+    cmd = f"arm-linux-gnueabihf-g++-9 -shared -fPIC -o {target} {objs}"
+    print(f"Generating .so: {cmd}")
+    os.system(cmd)
+
+# Generate .so to be transported to the target device
+path = "./lib.so"
+func.export_library(path, fcompile=make_shared_object)
 
 ######################################################################
 # .. note::
@@ -168,7 +176,7 @@ if local_demo:
     remote = rpc.LocalSession()
 else:
     # The following is my environment, change this to the IP address of your target device
-    host = "10.77.1.162"
+    host = "192.168.2.148"
     port = 9090
     remote = rpc.connect(host, port)
 
@@ -177,7 +185,7 @@ else:
 # compiler to relink them. Now `func` is a remote module object.
 
 remote.upload(path)
-func = remote.load_module("lib.tar")
+func = remote.load_module("lib.so")
 
 # create arrays on the remote device
 ctx = remote.cpu()
